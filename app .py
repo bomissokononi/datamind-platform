@@ -1710,7 +1710,8 @@ Entraîne automatiquement des modèles ML sur vos données : <strong>Régression
                         r2  = r2_score(y_test, y_pred)
                         mse = mean_squared_error(y_test, y_pred)
                         mae = mean_absolute_error(y_test, y_pred)
-                        cv  = cross_val_score(model, X_scaled, y, cv=5, scoring="r2").mean()
+                        n_cv = min(5, len(y) // 10) if len(y) >= 20 else 2
+                        cv  = cross_val_score(model, X_scaled, y, cv=max(2,n_cv), scoring="r2").mean() if len(y) >= 20 else r2
                         results_reg.append({"Modèle":name,"R²":round(r2,4),"MAE":round(mae,4),
                                              "RMSE":round(mse**0.5,4),"R² CV (5-fold)":round(cv,4)})
                         if r2 > best_r2:
@@ -1790,7 +1791,24 @@ Entraîne automatiquement des modèles ML sur vos données : <strong>Régression
                     X_clf = df_clf[features_clf].values
                     sc = StandardScaler()
                     X_clf_s = sc.fit_transform(X_clf)
-                    X_tr, X_te, y_tr, y_te = train_test_split(X_clf_s, y_clf, test_size=test_sz, random_state=42, stratify=y_clf if len(np.unique(y_clf))>1 else None)
+                    # Stratification sécurisée — désactivée si une classe a < 2 exemples
+                    unique_cls, cls_counts = np.unique(y_clf, return_counts=True)
+                    min_count = cls_counts.min()
+                    n_test = max(1, int(len(y_clf) * test_sz))
+                    # Stratifier seulement si chaque classe a assez d'exemples
+                    can_stratify = (
+                        len(unique_cls) > 1 and
+                        min_count >= 2 and
+                        n_test >= len(unique_cls)
+                    )
+                    if not can_stratify and min_count < 2:
+                        st.warning(f"⚠️ Certaines classes ont moins de 2 exemples — stratification désactivée.")
+                    X_tr, X_te, y_tr, y_te = train_test_split(
+                        X_clf_s, y_clf,
+                        test_size=test_sz,
+                        random_state=42,
+                        stratify=y_clf if can_stratify else None
+                    )
 
                     models_clf = {
                         "Random Forest":      RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
@@ -1807,7 +1825,9 @@ Entraîne automatiquement des modèles ML sur vos données : <strong>Régression
                         mdl.fit(X_tr, y_tr)
                         y_pr = mdl.predict(X_te)
                         acc = accuracy_score(y_te, y_pr)
-                        cv_acc = cross_val_score(mdl, X_clf_s, y_clf, cv=5, scoring="accuracy").mean()
+                        # Adapter le nombre de folds si peu de données
+                        n_folds = min(5, min_count) if min_count >= 2 else 2
+                        cv_acc = cross_val_score(mdl, X_clf_s, y_clf, cv=n_folds, scoring="accuracy").mean() if n_folds >= 2 else acc
                         results_clf.append({"Modèle":name,"Accuracy":round(acc,4),"Accuracy CV":round(cv_acc,4)})
                         if acc > best_acc: best_acc=acc; best_clf=(name,mdl,y_te,y_pr,le)
                     prog2.empty()
